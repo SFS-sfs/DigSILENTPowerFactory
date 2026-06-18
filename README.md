@@ -35,4 +35,4 @@ here is one of many ways to setup your digsilent env in vscode.
 
 **Acknowledgement**
 
-Gemini and Clkaude AI were used to assist in code writing.
+Gemini and Claude AI were used to assist in code writing.

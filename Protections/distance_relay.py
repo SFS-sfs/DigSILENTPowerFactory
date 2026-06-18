@@ -1,4 +1,6 @@
-#NOTE: Only use this if your terminal is an ElmTerm element.
+#Automate Distance Relay Settings
+
+#NOTE: Only use this if your terminal is an ElmTerm element. Make sure the CT and PT devices are already made and configured in the same cubicle as the relay.
 #Cannot be used if your opposite terminal is a substation element. For substation use distance_relay_substat.py instead.
 
 import sys

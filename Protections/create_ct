@@ -1,0 +1,90 @@
+# script to automate CT creation on line elements in DigSILENT PF
+
+import sys, math
+
+# Ensure this path matches your DIgSILENT version
+sys.path.append(r"C:\Program Files\DIgSILENT\PowerFactory 2021 SP2\Python\3.9")
+import powerfactory as pf
+
+app = pf.GetApplicationExt()
+app.ActivateProject("Project Name")  # Replace with your actual project name
+
+# ==========================================
+# 1. GET LINE & SELECT CUBICLE
+# ==========================================
+
+lines = app.GetCalcRelevantObjects("line.ElmLne") # your target line name
+if not lines:
+    print("[ERROR] Line not found.")
+    sys.exit()
+
+line = lines[0]
+
+# --- TERMINAL SELECTOR SWITCH ---
+# Change to 'j' if you want to install it at the other end
+target_terminal = 'j' 
+
+# bus1 = Terminal i, bus2 = Terminal j
+cub = line.bus1 if target_terminal == 'i' else line.bus2
+
+if not cub:
+    print(f"[ERROR] Terminal {target_terminal} on {line.loc_name} is not perfectly connected to a Bus.")
+    sys.exit()
+
+# ==========================================
+# 2. CALCULATE CT RATING
+# ==========================================
+i_nom = line.typ_id.sline * 1000
+std_ct = [50, 100, 150, 200, 250, 300, 400, 500, 600, 800, 1000, 1200, 1500, 2000, 3000] # INSERT YOUR CT RATIOS CANDIDATE HERE
+ct_pri = next((r for r in std_ct if r >= i_nom), math.ceil(i_nom/500) * 500)
+ct_sec = 1.0
+
+# ==========================================
+# 3. FIND/CREATE CT TYPE IN LIBRARY
+# ==========================================
+lib = app.GetProjectFolder("equip")
+ct_type = None
+
+for t in lib.GetContents("*.TypCt"):
+    p_taps = t.GetAttribute("primtaps")
+    s_taps = t.GetAttribute("sectaps")
+    
+    if p_taps and s_taps:
+        p_taps_list = [float(x) for x in p_taps]
+        s_taps_list = [float(x) for x in s_taps]
+        
+        if float(ct_pri) in p_taps_list and ct_sec in s_taps_list:
+            ct_type = t
+            print(f"[*] CT Type '{t.loc_name}' found in Library.")
+            break
+
+if not ct_type:
+    nama_tipe = f"CT Type {int(ct_pri)}/{int(ct_sec)}A"
+    print(f"[*] Creating new CT Type: {nama_tipe}")
+    ct_type = lib.CreateObject("TypCt", nama_tipe)
+    ct_type.SetAttribute("primtaps", [float(ct_pri)])
+    ct_type.SetAttribute("sectaps", [ct_sec])
+
+# ==========================================
+# 4. FIND/CREATE CT OBJECT IN SELECTED CUBICLE
+# ==========================================
+nama_bus = cub.cterm.loc_name if cub.cterm else "Unknown_Bus"
+nama_ct = f"CT_{nama_bus}"
+
+ct_list = cub.GetContents("*.StaCt")
+if ct_list:
+    ct_obj = ct_list[0]
+    print(f" -> Updating parameters for {ct_obj.loc_name} at {nama_bus} (Terminal {target_terminal})...")
+else:
+    ct_obj = cub.CreateObject("StaCt", nama_ct)
+    print(f" -> Creating new {nama_ct} at {nama_bus} (Terminal {target_terminal})...")
+
+# ==========================================
+# 5. INPUT PARAMETERS TO ELEMENT
+# ==========================================
+ct_obj.typ_id = ct_type
+ct_obj.ptapset = float(ct_pri)
+ct_obj.stapset = ct_sec
+
+app.WriteChangesToDb()
+print(f"\n[FINISHED] CT {int(ct_pri)}/{int(ct_sec)}A successfully installed at Terminal {target_terminal} ({line.loc_name})!")

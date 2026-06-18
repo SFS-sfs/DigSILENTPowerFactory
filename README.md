@@ -1,4 +1,4 @@
-This project focuses on python scripts to assist in power system simulations using DigSILENT Power Factory.
+This project focuses on python scripts to assist in power system simulations using DigSILENT Power Factory. It still keeps being updated.
 
 To get started, make sure the installed python version on your PC is the same as the one being used on your PF application.
 

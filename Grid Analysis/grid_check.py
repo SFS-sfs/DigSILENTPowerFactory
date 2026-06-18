@@ -78,14 +78,15 @@ def run_analysis():
     app.ClearOutputWindow()
     app.ActivateProject(PROJECT_NAME)
     
-    print_header("CHAPTER 2: GRID HEALTH CHECK (V6 - HYBRID CALC)")
+    print_header("CHAPTER 2: GRID HEALTH CHECK (V7 - HYBRID CALC & TYPE CHECK)")
+    
+    suspicious_components = [] 
     
     # ----------------------------------------------------
     # STEP 1: PARAMETER CHECK (MANUAL R/X, HYBRID B)
     # ----------------------------------------------------
     print_header("STEP 1: PER KM PARAMETER CHECK")
     
-    suspicious_components = [] 
     data_r, data_x, data_b, data_len = [], [], [], []
     
     lines = app.GetCalcRelevantObjects("*.ElmLne")
@@ -106,7 +107,6 @@ def run_analysis():
         r_km, x_km, b_km = None, None, None
 
         # 1. GET R & X (MANUALLY FROM ELEMENT)
-        # ------------------------------------------------
         try:
             R_total = l.GetAttribute("R1")
             X_total = l.GetAttribute("X1")
@@ -115,45 +115,30 @@ def run_analysis():
                 r_km = R_total / length
                 x_km = X_total / length
         except:
-            pass # Skip if failed to get R/X
+            pass 
 
         # 2. GET B (SUSCEPTANCE) - HYBRID LOGIC
-        # ------------------------------------------------
-        # Priority 1: Get B1 from Element (If user defined B)
-        # Priority 2: Get C1 (Capacitance) from Element -> Convert to B
-        # Priority 3: Get bline from Type (Fallback)
-        
         try:
             B_total = l.GetAttribute("B1") # uS
             if B_total is not None and B_total > 0 and length > 0:
                  b_km = B_total / length
         except: pass
         
-        # If B is still empty, try to find Capacitance (C1) in Element
         if b_km is None:
             try:
                 C_total = l.GetAttribute("C1") # Usually uF
                 if C_total is not None and C_total > 0 and length > 0:
-                    # Convert C (uF) to B (uS) assuming f=50Hz
-                    # B = 2 * pi * f * C
-                    # uF to uS -> multiplied by 1e6 (micro) -> cancel each other out
-                    # Practical formula: B(uS) = 314.159 * C(uF)
                     b_km = (314.159 * C_total) / length
             except: pass
             
-        # If still empty, get from TYPE
         if b_km is None and l_type:
             try:
                 b_km = l_type.GetAttribute("bline") # uS/km
             except: pass
 
-        # ------------------------------------------------
         # SAVE & CHECK
-        # ------------------------------------------------
-        # Save Length
         data_len.append({'name': name, 'type': t_name, 'val': length})
         
-        # Save & Check R
         if r_km is not None:
             data_r.append({'name': name, 'type': t_name, 'val': r_km})
             res = check_sanity(name, r_km, R_PER_KM_MIN, R_PER_KM_MAX, "Ohm/km", "R")
@@ -162,7 +147,6 @@ def run_analysis():
                 suspicious_components.append(res)
                 anomaly_found = True
 
-        # Save & Check X
         if x_km is not None:
             data_x.append({'name': name, 'type': t_name, 'val': x_km})
             res = check_sanity(name, x_km, X_PER_KM_MIN, X_PER_KM_MAX, "Ohm/km", "X")
@@ -171,7 +155,6 @@ def run_analysis():
                 suspicious_components.append(res)
                 anomaly_found = True
 
-        # Save & Check B
         if b_km is not None:
             data_b.append({'name': name, 'type': t_name, 'val': b_km})
             res = check_sanity(name, b_km, B_PER_KM_MIN, B_PER_KM_MAX, "uS/km", "B")
@@ -180,7 +163,6 @@ def run_analysis():
                 suspicious_components.append(res)
                 anomaly_found = True
         
-        # Check Length
         if length <= 0:
              msg = f"{name}: Length is 0 km"
              print(f"   [!] {msg}")
@@ -190,18 +172,57 @@ def run_analysis():
     if not anomaly_found: print("   >> Physical parameters look NORMAL.")
 
     # ----------------------------------------------------
-    # STEP 2: RANKING
+    # STEP 2: MISSING TYPE & CRITICAL CONFIGURATION CHECK
     # ----------------------------------------------------
-    print_header("STEP 2: EXTREME RANKING")
+    print_header("STEP 2: MISSING TYPE & CRITICAL CONFIGURATION CHECK")
+    
+    missing_type_flag = False
+    
+    # Dict of components to check for typ_id
+    comp_types_to_check = {
+        "Line": app.GetCalcRelevantObjects("*.ElmLne"),
+        "Transformer": app.GetCalcRelevantObjects("*.ElmTr2"),
+        "Generator": app.GetCalcRelevantObjects("*.ElmSym")
+    }
+    
+    for c_type, c_list in comp_types_to_check.items():
+        for comp in c_list:
+            if comp.GetAttribute("outserv") == 0:
+                if not comp.GetAttribute("typ_id"):
+                    msg = f"{c_type} '{comp.loc_name}' is MISSING a Type (typ_id)."
+                    print(f"   [!] {msg}")
+                    suspicious_components.append(msg)
+                    missing_type_flag = True
+
+    # Check Buses for missing Nominal Voltage
+    buses = app.GetCalcRelevantObjects("*.ElmTerm")
+    for b in buses:
+        if b.GetAttribute("outserv") == 0:
+            uknom = b.GetAttribute("uknom")
+            if uknom is None or uknom <= 0:
+                msg = f"Bus '{b.loc_name}' has 0 kV or MISSING Nominal Voltage (uknom)."
+                print(f"   [!] {msg}")
+                suspicious_components.append(msg)
+                missing_type_flag = True
+
+    if not missing_type_flag:
+        print("   >> All checked components have valid Types and Nominal Voltages.")
+    else:
+        print("   >>> WARNING: Missing Types or 0kV buses will almost certainly cause Load Flow divergence!")
+
+    # ----------------------------------------------------
+    # STEP 3: RANKING
+    # ----------------------------------------------------
+    print_header("STEP 3: EXTREME RANKING")
     show_top_bottom(data_r, "RESISTANCE PER KM", "Ohm/km")
     show_top_bottom(data_x, "INDUCTANCE PER KM", "Ohm/km")
     show_top_bottom(data_b, "SUSCEPTANCE PER KM", "uS/km")
     show_top_bottom(data_len, "LINE LENGTH", "km")
 
     # ----------------------------------------------------
-    # STEP 3: LOAD FLOW
+    # STEP 4: LOAD FLOW
     # ----------------------------------------------------
-    print_header("STEP 3: LOAD FLOW CHECK")
+    print_header("STEP 4: LOAD FLOW CHECK")
     sc = app.GetActiveStudyCase()
     if not sc:
         print("[ERROR] Activate Study Case first!")
@@ -233,7 +254,6 @@ def run_analysis():
         if not ov_flag: print("   >> Safe.")
 
         # Voltage Check
-        buses = app.GetCalcRelevantObjects("*.ElmTerm")
         print("\n[B] VOLTAGE CHECK")
         v_flag = False
         for b in buses:
@@ -250,12 +270,11 @@ def run_analysis():
     else:
         print("\n>>> STATUS: DIVERGED (Failed)")
         
-        # --- NEW: DIAGNOSTIC LOAD FLOW ---
+        # --- DIAGNOSTIC LOAD FLOW ---
         print("\n[*] Running Diagnostic Load Flow (Maintaining calculation to isolate failure)...")
         ldf.SetAttribute("iKeepCalc", 1) # Maintain calculation if calc fails
         ldf.Execute()
         
-        buses = app.GetCalcRelevantObjects("*.ElmTerm")
         low_v_buses = []
         good_v_buses = 0
         
@@ -283,17 +302,19 @@ def run_analysis():
                 print("    RECOMMENDED ACTIONS:")
                 print("    1. Adjust transformer taps to boost voltage in the affected area.")
                 print("    2. Install Capacitor Banks (Shunt Capacitors) near these specific buses.")
-                print("    3. Check if the lines/cables connected to these buses have Capacitance (C1) values defined. Missing capacitance data can artificially cause severe voltage drops in simulations.")
+                print("    3. Check if the lines/cables connected to these buses have Capacitance (C1) values defined.")
         else:
             print("    -> No isolated severe voltage drops found. The issue might be global.")
 
         # Reset iKeepCalc to default
         ldf.SetAttribute("iKeepCalc", 0)
         
-        # Diagnosa Komponen Aneh
-        print("\n[2] WEIRD COMPONENTS (Check these inputs!)")
+        # Diagnostic Weird Components
+        print("\n[2] WEIRD COMPONENTS & MISSING TYPES (Check these inputs!)")
         if suspicious_components:
-            for s in suspicious_components[:10]: print(f"    * {s}")
+            # Using set to avoid duplicate prints if an element triggered multiple flags
+            for s in list(dict.fromkeys(suspicious_components))[:15]: 
+                print(f"    * {s}")
         else:
             print("    Physical data looks safe. Likely extreme power overload.")
 

@@ -102,7 +102,7 @@ if __name__ == "__main__":
         importer = TimeCharacteristicImporter(app)
 
         # 3. Define Configurations
-        TARGET_CSV_PATH = r"C:\Users\ASUS\Documents\SF\LAPI\Merauke\operasi_merauke2.csv"
+        TARGET_CSV_PATH = r"C:\Users\YOUR PATH.csv"
         TARGET_FOLDER = "Operasi"
         
         # Define your time format here
